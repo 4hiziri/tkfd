@@ -1,0 +1,10 @@
+[package]
+name = "tkfd"
+version = "0.1.0"
+authors = ["4hiziri <meirvg@gmail.com>"]
+
+[dependencies]
+nix="0.10.0"
+log=""
+env_logger=""
+libc=""
