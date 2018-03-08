@@ -56,6 +56,12 @@ fn main() {
                 Stopped(_, signal) => {
                     println!("stopped by signal {:?}", signal);
                     let regs: user_regs_struct = getregs(pid).unwrap();
+
+                    let syscall = regs.orig_rax as i64;
+                    
+                    if syscall == libc::SYS_write {
+                        
+                    }
                     
                     println!("0x{:X} 0x{:X} 0x{:X} 0x{:X}", regs.orig_rax, regs.rsi, regs.rdx, regs.rdi);
                 }
