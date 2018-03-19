@@ -56,24 +56,45 @@ fn main() {
         debug!("Failed to attach: {}", pid);
         return;
     }
-
     debug!("Attached to {}", pid);
 
-    let mut option = ptrace::Options::empty();
-    option.set(ptrace::Options::PTRACE_O_TRACESYSGOOD, true);
-    match ptrace::setoptions(pid, option) {
-        Ok(()) => (),
-        Err(Sys(ESRCH)) => {
-            ptrace::detach(pid).unwrap();
+    if let Ok(status) = wait::waitpid(Some(pid), None) {
+        use wait::WaitStatus::*;
+
+        match status {
+            Stopped(pid, _) => {
+                let mut option = ptrace::Options::empty();
+                option.set(ptrace::Options::PTRACE_O_TRACESYSGOOD, true);
+                match ptrace::setoptions(pid, option) {
+                    Ok(()) => {debug!("setoptions successed");}
+                    Err(Sys(ESRCH)) => {
+                        debug!("setoptions failed: ESRCH");
+                        println!("Erorr exit");
+                        return;
+                    }
+                    Err(sys) => {
+                        debug!("setoptions failed: {:?}", sys);
+                        println!("Erorr exit");
+                        return;
+                    }
+                };
+            }
+            stat => {
+                debug!("setoptions failed: {:?}", stat);
+                println!("Error");
+                return;
+            }
         }
-        Err(_) => {
-            ptrace::detach(pid).unwrap();
-        }
-    };
+    } else {
+        debug!("waitpid failed");
+        println!("Error");
+    }
+
 
     let mut is_enter_stopped = false;
     let mut prev_orig_rax: u64 = std::u64::MAX; // -1?
 
+    ptrace::syscall(pid).unwrap();
     loop {
         if let Ok(status) = wait::waitpid(Some(pid), None) {
             use wait::WaitStatus::*;
@@ -91,7 +112,7 @@ fn main() {
                         true
                     };
 
-                    debug!("regs: {:?}", regs.orig_rax);
+                    prev_orig_rax = regs.orig_rax;
 
                     if is_enter_stopped && regs.orig_rax as i64 == libc::SYS_write {
                         println!("============================");
