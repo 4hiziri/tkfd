@@ -8,6 +8,8 @@ use nix::sys::ptrace;
 use nix::sys::wait;
 use nix::unistd::Pid;
 use nix::errno::Errno;
+use nix::errno::Errno::ESRCH;
+use nix::Error::Sys;
 use nix::sys::signal;
 
 use libc::{c_void, user_regs_struct};
@@ -54,11 +56,20 @@ fn main() {
         debug!("Failed to attach: {}", pid);
         return;
     }
+
     debug!("Attached to {}", pid);
 
     let mut option = ptrace::Options::empty();
     option.set(ptrace::Options::PTRACE_O_TRACESYSGOOD, true);
-    ptrace::setoptions(pid, option).unwrap();
+    match ptrace::setoptions(pid, option) {
+        Ok(()) => (),
+        Err(Sys(ESRCH)) => {
+            ptrace::detach(pid).unwrap();
+        }
+        Err(_) => {
+            ptrace::detach(pid).unwrap();
+        }
+    };
 
     let mut is_enter_stopped = false;
     let mut prev_orig_rax: u64 = std::u64::MAX; // -1?
