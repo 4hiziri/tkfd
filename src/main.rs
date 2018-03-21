@@ -21,6 +21,26 @@ use std::{mem, ptr};
 use std::thread::sleep;
 use std::time::Duration;
 
+#[cfg(target_pointer_width = "64")]
+fn regularize_num(num: usize) -> usize {
+    let dif = 0x8 - (num % 0x8);
+    let ret = num + dif;
+
+    assert_eq!(ret % 0x8, 0);
+
+    ret
+}
+
+#[cfg(target_pointer_width = "32")]
+fn regularize_num(num: usize) -> usize {
+    let dif = 0x4 - (num % 0x4);
+    let ret = num + dif;
+
+    assert_eq!(ret % 0x4, 0);
+
+    ret
+}
+
 fn getregs(pid: Pid) -> nix::Result<user_regs_struct> {
     use nix::sys::ptrace::Request::PTRACE_GETREGS;
 
@@ -34,15 +54,24 @@ fn getregs(pid: Pid) -> nix::Result<user_regs_struct> {
             &data as *const _ as *const c_void,
         )
     };
+
     Errno::result(res)?;
     Ok(data)
 }
 
-fn peekdata(pid: Pid, addr: u64, size: u64) {
-    // TODO: peekdata size
-    for i in 0..size {
-        println!("{}", i);
+fn peekdata(pid: Pid, addr: u64, size: usize) -> Vec<u64> {
+    use nix::sys::ptrace::Request::PTRACE_PEEKDATA;
+
+    let mut dst: Vec<u64> = Vec::with_capacity(size);
+
+    unsafe {
+        for i in 0..(regularize_num(size)) {
+            let data = libc::ptrace(PTRACE_PEEKDATA as libc::c_uint, pid, addr + i as u64);
+            dst.push(data as u64);
+        }
     }
+
+    dst
 }
 
 fn main() {
@@ -118,12 +147,22 @@ fn main() {
                         println!("============================");
                         println!("orig_rax = 0x{:X}", regs.orig_rax);
                         println!("rax = 0x{:X}", regs.rax);
+                        println!("rdi = 0x{:X}", regs.rdi);
                         println!("rsi = 0x{:X}", regs.rsi);
                         println!("rdx = 0x{:X}", regs.rdx);
-                        println!("rdi = 0x{:X}", regs.rdi);
                         println!("============================");
 
-                        peekdata(pid, 0, 0);
+                        let fd = regs.rdi;
+                        let buf_addr = regs.rsi;
+                        let size = regs.rdx;
+
+                        if fd == 1 || fd == 2 {
+                            debug!(
+                                "peekdata: {:?}",
+                                peekdata(pid, buf_addr as u64, size as usize)
+                            );
+                            break;
+                        }
                     }
                 }
                 _ => {}
