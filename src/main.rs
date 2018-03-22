@@ -3,6 +3,7 @@ extern crate log;
 extern crate env_logger;
 extern crate nix;
 extern crate libc;
+extern crate byteorder;
 
 use nix::sys::ptrace;
 use nix::sys::wait;
@@ -10,16 +11,18 @@ use nix::unistd::Pid;
 use nix::errno::Errno;
 use nix::errno::Errno::ESRCH;
 use nix::Error::Sys;
-use nix::sys::signal;
+// use nix::sys::signal;
 
 use libc::{c_void, user_regs_struct};
+
+use byteorder::{NativeEndian, WriteBytesExt};
 
 use std::env;
 use std::str::FromStr;
 use std::{mem, ptr};
 
-use std::thread::sleep;
-use std::time::Duration;
+// use std::thread::sleep;
+// use std::time::Duration;
 
 #[cfg(target_pointer_width = "64")]
 fn regularize_num(num: usize) -> usize {
@@ -39,6 +42,16 @@ fn regularize_num(num: usize) -> usize {
     assert_eq!(ret % 0x4, 0);
 
     ret
+}
+
+fn u64vec_u8vec(u64vec: Vec<u64>) -> Result<Vec<u8>, std::io::Error> {
+    let mut dst: Vec<u8> = Vec::new();
+
+    for u64_val in u64vec {
+        dst.write_u64::<NativeEndian>(u64_val)?;
+    }
+
+    Ok(dst)
 }
 
 fn getregs(pid: Pid) -> nix::Result<user_regs_struct> {
@@ -65,6 +78,7 @@ fn peekdata(pid: Pid, addr: u64, size: usize) -> Vec<u64> {
     let mut dst: Vec<u64> = Vec::with_capacity(size);
 
     unsafe {
+        // FIXME: increment error
         for i in 0..(regularize_num(size)) {
             let data = libc::ptrace(PTRACE_PEEKDATA as libc::c_uint, pid, addr + i as u64);
             dst.push(data as u64);
@@ -128,8 +142,6 @@ fn main() {
         if let Ok(status) = wait::waitpid(Some(pid), None) {
             use wait::WaitStatus::*;
 
-            debug!("status: {:?}", status);
-
             match status {
                 Exited(_, _) => break,                
                 PtraceSyscall(_) => {
@@ -157,10 +169,13 @@ fn main() {
                         let size = regs.rdx;
 
                         if fd == 1 || fd == 2 {
-                            debug!(
-                                "peekdata: {:?}",
-                                peekdata(pid, buf_addr as u64, size as usize)
-                            );
+                            let data = peekdata(pid, buf_addr as u64, size as usize);
+                            let data = u64vec_u8vec(data).unwrap();
+                            // debug!("peekdata: {:?}", data);
+                            unsafe {
+                                let string = std::str::from_utf8_unchecked(&data);
+                                debug!("peekdata_string: {}", string);
+                            }
                             break;
                         }
                     }
