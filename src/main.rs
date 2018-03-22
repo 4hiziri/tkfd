@@ -24,33 +24,6 @@ use std::{mem, ptr};
 // use std::thread::sleep;
 // use std::time::Duration;
 
-// fn inner_regularize_num(num: usize, length: usize) -> usize {
-//     let ret = num + (length - (num % length));
-//     assert_eq!(ret % length, 0);
-
-//     ret
-// }
-
-// #[cfg(target_pointer_width = "64")]
-// fn regularize_num(num: usize) -> usize {
-//     inner_regularize_num(num, 0x8)
-// }
-
-// #[cfg(target_pointer_width = "32")]
-// fn regularize_num(num: usize) -> usize {
-//     inner_regularize_num(num, 0x4)
-// }
-
-// fn u64vec_u8vec(u64vec: Vec<u64>) -> Result<Vec<u8>, std::io::Error> {
-//     let mut dst: Vec<u8> = Vec::new();
-
-//     for u64_val in u64vec {
-//         dst.write_u64::<NativeEndian>(u64_val)?;
-//     }
-
-//     Ok(dst)
-// }
-
 fn getregs(pid: Pid) -> nix::Result<user_regs_struct> {
     use nix::sys::ptrace::Request::PTRACE_GETREGS;
 
@@ -226,9 +199,12 @@ fn main() {
                             // debug!("peekdata: {:?}", data);
                             unsafe {
                                 let string = std::str::from_utf8_unchecked(&data);
-                                debug!("peekdata_string: {}", string);
-                                print!("{}", string);
-                                eprint!("{}", string);
+                                // debug!("peekdata_string: {}", string);
+                                if fd == 1 {
+                                    print!("{}", string);
+                                } else if fd == 2 {
+                                    eprint!("{}", string);
+                                }
                             }
                         }
                     }
