@@ -24,35 +24,32 @@ use std::{mem, ptr};
 // use std::thread::sleep;
 // use std::time::Duration;
 
-#[cfg(target_pointer_width = "64")]
-fn regularize_num(num: usize) -> usize {
-    let dif = 0x8 - (num % 0x8);
-    let ret = num + dif;
+// fn inner_regularize_num(num: usize, length: usize) -> usize {
+//     let ret = num + (length - (num % length));
+//     assert_eq!(ret % length, 0);
 
-    assert_eq!(ret % 0x8, 0);
+//     ret
+// }
 
-    ret
-}
+// #[cfg(target_pointer_width = "64")]
+// fn regularize_num(num: usize) -> usize {
+//     inner_regularize_num(num, 0x8)
+// }
 
-#[cfg(target_pointer_width = "32")]
-fn regularize_num(num: usize) -> usize {
-    let dif = 0x4 - (num % 0x4);
-    let ret = num + dif;
+// #[cfg(target_pointer_width = "32")]
+// fn regularize_num(num: usize) -> usize {
+//     inner_regularize_num(num, 0x4)
+// }
 
-    assert_eq!(ret % 0x4, 0);
+// fn u64vec_u8vec(u64vec: Vec<u64>) -> Result<Vec<u8>, std::io::Error> {
+//     let mut dst: Vec<u8> = Vec::new();
 
-    ret
-}
+//     for u64_val in u64vec {
+//         dst.write_u64::<NativeEndian>(u64_val)?;
+//     }
 
-fn u64vec_u8vec(u64vec: Vec<u64>) -> Result<Vec<u8>, std::io::Error> {
-    let mut dst: Vec<u8> = Vec::new();
-
-    for u64_val in u64vec {
-        dst.write_u64::<NativeEndian>(u64_val)?;
-    }
-
-    Ok(dst)
-}
+//     Ok(dst)
+// }
 
 fn getregs(pid: Pid) -> nix::Result<user_regs_struct> {
     use nix::sys::ptrace::Request::PTRACE_GETREGS;
@@ -72,17 +69,72 @@ fn getregs(pid: Pid) -> nix::Result<user_regs_struct> {
     Ok(data)
 }
 
-fn peekdata(pid: Pid, addr: u64, size: usize) -> Vec<u64> {
+#[cfg(target_pointer_width = "64")]
+fn peekdata(pid: Pid, addr: u64, size: usize) -> Vec<u8> {
     use nix::sys::ptrace::Request::PTRACE_PEEKDATA;
 
-    let mut dst: Vec<u64> = Vec::with_capacity(size);
+    let byte_len: usize = 8;
+    let mut dst: Vec<u8> = Vec::with_capacity(size);
+    let about_num = if size % byte_len == 0 {
+        size / byte_len
+    } else {
+        size / byte_len + 1
+    };
 
-    unsafe {
-        // FIXME: increment error
-        for i in 0..(regularize_num(size)) {
-            let data = libc::ptrace(PTRACE_PEEKDATA as libc::c_uint, pid, addr + i as u64);
-            dst.push(data as u64);
+    for i in 0..about_num {
+        unsafe {
+            let i = i as u64;
+            let data = libc::ptrace(
+                PTRACE_PEEKDATA as libc::c_uint,
+                pid,
+                addr + i * byte_len as u64,
+            );
+
+            let mut buf: Vec<u8> = Vec::new();
+            buf.write_u64::<NativeEndian>(data as u64).unwrap();
+            dst.append(&mut buf);
         }
+    }
+
+    let over_len = (byte_len - size % byte_len) % byte_len;
+    for _ in 0..over_len {
+        dst.pop();
+    }
+
+    dst
+}
+
+#[cfg(target_pointer_width = "32")]
+fn peekdata(pid: Pid, addr: u32, size: usize) -> Vec<u8> {
+    use nix::sys::ptrace::Request::PTRACE_PEEKDATA;
+
+    let byte_len: usize = 4;
+    let mut dst: Vec<u8> = Vec::with_capacity(size);
+    let about_num = if size % byte_len == 0 {
+        size / byte_len
+    } else {
+        size / byte_len + 1
+    };
+
+    for i in 0..about_num {
+        unsafe {
+            // extract here?
+            let i = i as u32;
+            let data = libc::ptrace(
+                PTRACE_PEEKDATA as libc::c_uint,
+                pid,
+                addr + i * byte_len as u32,
+            );
+
+            let mut buf: Vec<u8> = Vec::new();
+            buf.write_u32::<NativeEndian>(data as u32).unwrap();
+            dst.append(&mut buf);
+        }
+    }
+
+    let over_len = (byte_len - size % byte_len) % byte_len;
+    for _ in 0..over_len {
+        dst.pop();
     }
 
     dst
@@ -156,13 +208,13 @@ fn main() {
                     prev_orig_rax = regs.orig_rax;
 
                     if is_enter_stopped && regs.orig_rax as i64 == libc::SYS_write {
-                        println!("============================");
-                        println!("orig_rax = 0x{:X}", regs.orig_rax);
-                        println!("rax = 0x{:X}", regs.rax);
-                        println!("rdi = 0x{:X}", regs.rdi);
-                        println!("rsi = 0x{:X}", regs.rsi);
-                        println!("rdx = 0x{:X}", regs.rdx);
-                        println!("============================");
+                        debug!("============================");
+                        debug!("orig_rax = 0x{:X}", regs.orig_rax);
+                        debug!("rax = 0x{:X}", regs.rax);
+                        debug!("rdi = 0x{:X}", regs.rdi);
+                        debug!("rsi = 0x{:X}", regs.rsi);
+                        debug!("rdx = 0x{:X}", regs.rdx);
+                        debug!("============================");
 
                         let fd = regs.rdi;
                         let buf_addr = regs.rsi;
@@ -170,13 +222,14 @@ fn main() {
 
                         if fd == 1 || fd == 2 {
                             let data = peekdata(pid, buf_addr as u64, size as usize);
-                            let data = u64vec_u8vec(data).unwrap();
+                            // let data = u64vec_u8vec(data).unwrap();
                             // debug!("peekdata: {:?}", data);
                             unsafe {
                                 let string = std::str::from_utf8_unchecked(&data);
                                 debug!("peekdata_string: {}", string);
+                                print!("{}", string);
+                                eprint!("{}", string);
                             }
-                            break;
                         }
                     }
                 }
